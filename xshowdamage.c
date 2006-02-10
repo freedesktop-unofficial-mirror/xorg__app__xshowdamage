@@ -164,6 +164,13 @@ findArgbVisual (Display *dpy, int scr)
     return visual;
 }
 
+static int
+errorHandler (Display     *dpy,
+	      XErrorEvent *e)
+{
+    return 0;
+}
+
 int
 main (int argc, char **argv)
 {
@@ -179,19 +186,21 @@ main (int argc, char **argv)
     int			 damageError, damageEvent;
     XEvent		 event;
     struct pollfd	 ufd;
-    Window		 watchWindow;
-    Damage		 damage;
+    Window		 watchWindow = None;
     int			 redraw = 0;
     XGCValues		 gcv;
 
-    if (argc < 2)
+    if (argc > 1)
     {
-	fprintf (stderr, "Usage: %s WINDOW\n", argv[0]);
-	return 1;
-    }
+	if (strcmp (argv[1], "-help") == 0 ||
+	    strcmp (argv[1], "--help") == 0)
+	{
+	    fprintf (stderr, "Usage: %s [WINDOW-ID]\n", argv[0]);
+	    return 1;
+	}
 
-    watchWindow = strtol (argv[1], NULL, 0);
-    fprintf (stderr, "0x%x\n", (int) watchWindow);
+	watchWindow = strtol (argv[1], NULL, 0);
+    }
 
     dpy = XOpenDisplay (NULL);
     if (!dpy)
@@ -209,10 +218,14 @@ main (int argc, char **argv)
 	return 1;
     }
 
-    damage = XDamageCreate (dpy, watchWindow, XDamageReportRawRectangles);
+    if (watchWindow)
+	XDamageCreate (dpy, watchWindow, XDamageReportRawRectangles);
 
     state[nState++] = XInternAtom (dpy, "_NET_WM_STATE_FULLSCREEN", 0);
     state[nState++] = XInternAtom (dpy, "_NET_WM_STATE_ABOVE", 0);
+    state[nState++] = XInternAtom (dpy, "_NET_WM_STATE_STICKY", 0);
+    state[nState++] = XInternAtom (dpy, "_NET_WM_STATE_SKIP_TASKBAR", 0);
+    state[nState++] = XInternAtom (dpy, "_NET_WM_STATE_SKIP_PAGER", 0);
 
     screen = DefaultScreen (dpy);
     root   = RootWindow (dpy, screen);
@@ -259,6 +272,38 @@ main (int argc, char **argv)
     gcv.graphics_exposures = False;
     gc = XCreateGC (dpy, win, GCGraphicsExposures, &gcv);
 
+    XSetErrorHandler (errorHandler);
+
+    if (!watchWindow)
+    {
+	Window	     rootReturn, parentReturn;
+	Window	     *children;
+	unsigned int nchildren, i;
+
+	XSelectInput (dpy, XRootWindow (dpy, 0), SubstructureNotifyMask);
+
+	XQueryTree (dpy, XRootWindow (dpy, 0),
+		    &rootReturn, &parentReturn,
+		    &children, &nchildren);
+
+	for (i = 0; i < nchildren; i++)
+	{
+	    if (children[i] != win)
+	    {
+		XWindowAttributes attrib;
+
+		if (XGetWindowAttributes (dpy,
+					  children[i],
+					  &attrib))
+		{
+		    if (!attrib.override_redirect)
+			XDamageCreate (dpy, children[i],
+				       XDamageReportRawRectangles);
+		}
+	    }
+	}
+    }
+
     for (;;)
     {
 	while (XPending (dpy))
@@ -269,6 +314,21 @@ main (int argc, char **argv)
 	    case Expose:
 		XClearWindow (dpy, win);
 		redraw = 1;
+		break;
+	    case MapNotify:
+		if (!watchWindow && event.xcreatewindow.window != win)
+		{
+		    XWindowAttributes attrib;
+
+		    if (XGetWindowAttributes (dpy,
+					      event.xcreatewindow.window,
+					      &attrib))
+		    {
+			if (!attrib.override_redirect)
+			    XDamageCreate (dpy, event.xcreatewindow.window,
+					   XDamageReportRawRectangles);
+		    }
+		}
 		break;
 	    default:
 		if (event.type == damageEvent + XDamageNotify)

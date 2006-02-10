@@ -1,5 +1,5 @@
-CFLAGS+=-g -Wall -Wstrict-prototypes -Wmissing-prototypes -Wmissing-declarations -Wredundant-decls
-LDFLAGS+=-lX11 -lXext -lXrender -lXdamage
+CFLAGS+=-g -Wall -Wstrict-prototypes -Wmissing-prototypes -Wmissing-declarations -Wredundant-decls `pkg-config --cflags xrender xdamage xext`
+LDFLAGS+=`pkg-config --libs xrender xdamage xext`
 
 PROGS=xshowdamage
 
